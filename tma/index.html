@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>negroni.work TMA MVP</title>
+
+    <link rel="stylesheet" href="./style.css" />
+
+    <!-- Telegram Mini Apps SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <main class="wrap">
+      <h1>Photo MVP</h1>
+
+      <label class="btn">
+        Take / Choose photo
+        <input id="file" type="file" accept="image/*" capture="environment" />
+      </label>
+
+      <div id="previewWrap" class="previewWrap hidden">
+        <img id="preview" alt="preview" />
+      </div>
+
+      <button id="shareBtn" class="btn primary" disabled>Share</button>
+      <a id="downloadBtn" class="btn" download="photo.jpg" href="#" aria-disabled="true">Download</a>
+
+      <p id="hint" class="hint"></p>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
