@@ -1,40 +1,52 @@
+// worker/src/index.ts
+
 export default {
   async fetch(request: Request): Promise<Response> {
-    const origin = request.headers.get("Origin") || "";
+    const url = new URL(request.url);
 
-    // Allow your GitHub Pages origins
-    const ALLOWED_ORIGINS = new Set([
+    // Allow your GitHub Pages origins.
+    // Note: Some embedded webviews may send Origin: null.
+    const allowedOrigins = new Set([
       "https://negroni.work",
       "https://www.negroni.work",
+      "null",
     ]);
 
-    const corsHeaders = (o: string) => ({
-      "Access-Control-Allow-Origin": ALLOWED_ORIGINS.has(o) ? o : "https://negroni.work",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
-      Vary: "Origin",
-    });
+    function corsHeaders(req: Request) {
+      const origin = req.headers.get("Origin") ?? "";
+      const requestedHeaders =
+        req.headers.get("Access-Control-Request-Headers") ?? "Content-Type";
+
+      const allowOrigin = allowedOrigins.has(origin)
+        ? origin
+        : "https://negroni.work";
+
+      return {
+        "Access-Control-Allow-Origin": allowOrigin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": requestedHeaders,
+        "Access-Control-Max-Age": "86400",
+        Vary: "Origin, Access-Control-Request-Headers",
+      };
+    }
 
     // CORS preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(origin) });
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
-
-    const url = new URL(request.url);
 
     // Health check
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response("ok", { status: 200 });
     }
 
-    // Echo endpoint: expects multipart form-data field "file"
+    // Echo endpoint: expects multipart/form-data with a "file" field
     if (request.method === "POST" && url.pathname === "/echo") {
       const ct = request.headers.get("Content-Type") || "";
       if (!ct.toLowerCase().includes("multipart/form-data")) {
         return new Response("Expected multipart/form-data", {
           status: 400,
-          headers: corsHeaders(origin),
+          headers: corsHeaders(request),
         });
       }
 
@@ -44,16 +56,16 @@ export default {
       if (!(file instanceof File)) {
         return new Response('Missing "file" in form-data', {
           status: 400,
-          headers: corsHeaders(origin),
+          headers: corsHeaders(request),
         });
       }
 
-      // Optional safety limit (e.g., 12MB)
-      const MAX_BYTES = 12 * 1024 * 1024;
+      // Safety limit (increase if you want)
+      const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
       if (file.size > MAX_BYTES) {
-        return new Response("File too large", {
+        return new Response(`File too large (max ${MAX_BYTES} bytes)`, {
           status: 413,
-          headers: corsHeaders(origin),
+          headers: corsHeaders(request),
         });
       }
 
@@ -62,9 +74,9 @@ export default {
       return new Response(buf, {
         status: 200,
         headers: {
-          ...corsHeaders(origin),
+          ...corsHeaders(request),
           "Content-Type": file.type || "application/octet-stream",
-          // Helpful for debugging:
+          // Debug (optional):
           "X-File-Name": encodeURIComponent(file.name || "upload"),
           "X-File-Size": String(file.size),
         },
