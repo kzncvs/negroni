@@ -109,7 +109,7 @@ shareBtn.addEventListener("click", async () => {
       );
     }
   } catch (e) {
-    setHint("Backend echo/share failed. You can still Download.");
+  setHint(`Backend/share failed: ${e?.message || String(e)}`);
   } finally {
     shareBtn.disabled = false;
   }
