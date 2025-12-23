@@ -1,7 +1,6 @@
 // /tma/app.js
 
 const tg = window.Telegram?.WebApp;
-
 if (tg) {
   tg.ready();
   tg.expand();
@@ -14,15 +13,17 @@ const shareBtn = document.getElementById("shareBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const hint = document.getElementById("hint");
 
-let currentFile = null;
+let originalFile = null;
+let echoedFile = null;
+
 let downloadObjectUrl = null;
+let inFlight = null; // AbortController for the echo request
 
 function setHint(text) {
   hint.textContent = text || "";
 }
 
 function setDownload(file) {
-  // Revoke previous URL to avoid leaks
   if (downloadObjectUrl) URL.revokeObjectURL(downloadObjectUrl);
   downloadObjectUrl = URL.createObjectURL(file);
   downloadBtn.href = downloadObjectUrl;
@@ -37,18 +38,19 @@ function canShareFile(file) {
   );
 }
 
-async function echoFileThroughBackend(file) {
+async function echoFileThroughBackend(file, signal) {
   const fd = new FormData();
   fd.append("file", file, file.name || "photo.jpg");
 
   const res = await fetch("https://api.negroni.work/echo", {
     method: "POST",
     body: fd,
+    signal,
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Echo failed: ${res.status} ${text}`);
+    throw new Error(`Echo failed: ${res.status} ${text}`.trim());
   }
 
   const blob = await res.blob();
@@ -57,65 +59,80 @@ async function echoFileThroughBackend(file) {
   return new File([blob], outName, { type: outType });
 }
 
-fileInput.addEventListener("change", () => {
+fileInput.addEventListener("change", async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
 
-  currentFile = file;
+  originalFile = file;
+  echoedFile = null;
 
-  // Preview
+  // Preview original immediately
   const tmpUrl = URL.createObjectURL(file);
   preview.src = tmpUrl;
   preview.onload = () => URL.revokeObjectURL(tmpUrl);
 
   previewWrap.classList.remove("hidden");
-  shareBtn.disabled = false;
 
-  // Download original (not echoed)
+  // Download original while we prepare echoed
   setDownload(file);
 
-  if (canShareFile(file)) {
-    setHint("Tap Share → choose Telegram in the system share sheet.");
-  } else {
-    setHint(
-      "Share is not supported here. Use Download, then attach in Telegram manually."
-    );
+  // Cancel any previous echo request
+  if (inFlight) inFlight.abort();
+  inFlight = new AbortController();
+
+  shareBtn.disabled = true;
+  setHint("Uploading to backend…");
+
+  try {
+    const echoed = await echoFileThroughBackend(file, inFlight.signal);
+    echoedFile = echoed;
+
+    // Make download link point to echoed file (optional)
+    setDownload(echoedFile);
+
+    // Now user can tap Share (a fresh gesture)
+    shareBtn.disabled = false;
+
+    if (canShareFile(echoedFile)) {
+      setHint("Ready. Tap Share → choose Telegram in the share sheet.");
+    } else {
+      setHint(
+        "Ready, but sharing isn’t supported here. Use Download, then attach in Telegram manually."
+      );
+    }
+  } catch (e) {
+    if (e?.name === "AbortError") return; // user picked another file quickly
+    setHint(`Backend prepare failed: ${e?.message || String(e)}`);
+    shareBtn.disabled = true; // no echoed file to share
   }
 });
 
 shareBtn.addEventListener("click", async () => {
-  if (!currentFile) return;
+  // IMPORTANT: no await/async work before navigator.share() here
+  if (!echoedFile) {
+    setHint("Not ready yet — pick a photo and wait for upload to finish.");
+    return;
+  }
 
-  shareBtn.disabled = true;
-  setHint("Uploading…");
+  if (!canShareFile(echoedFile)) {
+    setHint("Sharing not supported here. Use Download.");
+    return;
+  }
 
   try {
-    const echoed = await echoFileThroughBackend(currentFile);
-
-    // Update download link to echoed file too (optional)
-    setDownload(echoed);
-
-    if (canShareFile(echoed)) {
-      setHint("Opening share sheet…");
-      await navigator.share({
-        files: [echoed],
-        title: "Photo",
-        text: "Shared from negroni.work Mini App",
-      });
-      setHint("Shared (or share sheet closed).");
-    } else {
-      setHint(
-        "Sharing not supported here. Use Download, then attach in Telegram manually."
-      );
-    }
+    await navigator.share({
+      files: [echoedFile],
+      title: "Photo",
+      text: "Shared from negroni.work Mini App",
+    });
+    setHint("Shared (or share sheet closed).");
   } catch (e) {
-  setHint(`Backend/share failed: ${e?.message || String(e)}`);
-  } finally {
-    shareBtn.disabled = false;
+    // user cancel is common
+    setHint(`Share cancelled/failed: ${e?.message || String(e)}`);
   }
 });
 
-// Cleanup object URL on page unload
 window.addEventListener("beforeunload", () => {
   if (downloadObjectUrl) URL.revokeObjectURL(downloadObjectUrl);
+  if (inFlight) inFlight.abort();
 });
