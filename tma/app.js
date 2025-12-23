@@ -65,7 +65,6 @@ function getTelegramUserId() {
 
 function enableShare(enabled) {
   shareZone.disabled = !enabled;
-  // (optional) make it feel “disabled” even though it’s transparent
   shareZone.style.pointerEvents = enabled ? "auto" : "none";
 }
 
@@ -137,8 +136,8 @@ if (tg?.onEvent) {
 /**
  * UI states:
  * - idle: blink 1<->2, capture enabled, share disabled
- * - uploading: show 3, share disabled
- * - ready: blink 4<->5, share enabled (only after preparedInline exists)
+ * - uploading: blink 3<->31, share disabled
+ * - ready: blink 4<->5, share enabled
  */
 
 function setIdleState() {
@@ -153,11 +152,10 @@ function setIdleState() {
 }
 
 async function setUploadingStateAndProcess(file) {
-  stopBlink();
-  setUi("3.jpg");
+  // While waiting, blink 3 <-> 31
   enableShare(false);
-
   setHint("Processing…");
+  startBlink("3.jpg", "31.jpg");
 
   // cancel previous echo
   if (inFlightEcho) inFlightEcho.abort();
@@ -167,14 +165,18 @@ async function setUploadingStateAndProcess(file) {
     // 1) Echo through backend
     echoedFile = await echoFileThroughBackend(file, inFlightEcho.signal);
 
-    // 2) Prepare Telegram share in background
+    // 2) Prepare Telegram share
     if (!telegramShareSupported()) {
+      stopBlink();
+      setUi("3.jpg");
       setHint("Open inside Telegram to share.");
       return;
     }
 
     const userId = getTelegramUserId();
     if (!userId) {
+      stopBlink();
+      setUi("3.jpg");
       setHint("Open inside Telegram to share.");
       return;
     }
@@ -182,17 +184,23 @@ async function setUploadingStateAndProcess(file) {
     setHint("Preparing share…");
     preparedInline = await savePreparedInlineMessage(echoedFile, userId);
 
-    // 3) Now it's “shareable”: blink 4<->5 and enable share zone
+    // 3) Ready
     if (isPreparedValid(preparedInline)) {
       enableShare(true);
       setHint("Ready. Tap SHARE.");
       startBlink("4.jpg", "5.jpg");
     } else {
       preparedInline = null;
+      stopBlink();
+      setUi("3.jpg");
       setHint("Share prepare failed. Try again.");
     }
   } catch (e) {
     if (e?.name === "AbortError") return;
+    preparedInline = null;
+    enableShare(false);
+    stopBlink();
+    setUi("3.jpg");
     setHint(`Failed: ${e?.message || String(e)}`);
   }
 }
@@ -201,7 +209,6 @@ async function setUploadingStateAndProcess(file) {
 
 // Capture: open file picker/camera
 captureZone.addEventListener("click", () => {
-  // Must be direct gesture -> keep it synchronous
   fileInput.click();
 });
 
@@ -223,7 +230,7 @@ shareZone.addEventListener("click", async () => {
   }
 
   try {
-    // If prepared expired/missing, recreate (may take a moment)
+    // If prepared expired/missing, recreate
     if (!isPreparedValid(preparedInline)) {
       enableShare(false);
       setHint("Refreshing share…");
@@ -236,7 +243,6 @@ shareZone.addEventListener("click", async () => {
       return;
     }
 
-    // Share via Telegram chat picker
     tg.shareMessage(preparedInline.id, (ok) => {
       setHint(ok ? "Shared to Telegram." : "Share closed.");
     });
@@ -262,7 +268,7 @@ fileInput.addEventListener("change", async () => {
 
 /* --- boot --- */
 
-preloadImages(["1.jpg", "2.jpg", "3.jpg", "4.jpg", "5.jpg"]);
+preloadImages(["1.jpg", "2.jpg", "3.jpg", "31.jpg", "4.jpg", "5.jpg"]);
 setIdleState();
 
 window.addEventListener("beforeunload", () => {
