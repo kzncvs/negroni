@@ -78,15 +78,65 @@ async function echoFileThroughBackend(file, signal) {
     signal,
   });
 
-  if (!res.ok) {
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
     const text = await res.text().catch(() => "");
     throw new Error(`Echo failed: ${res.status} ${text}`.trim());
   }
 
-  const blob = await res.blob();
+  if (!res.ok || !data?.ok || !data?.jobId) {
+    throw new Error(data?.error || `Echo failed: ${res.status}`);
+  }
+
+  const blob = await pollEchoStatus(data.jobId, signal);
   const outType = blob.type || file.type || "application/octet-stream";
   const outName = file.name || "photo.jpg";
   return new File([blob], outName, { type: outType });
+}
+
+async function pollEchoStatus(jobId, signal) {
+  const pollUrl = new URL("https://api.negroni.work/echo/status");
+  pollUrl.searchParams.set("jobId", jobId);
+
+  // Poll up to ~2 minutes
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = await fetch(pollUrl.toString(), { method: "GET", signal });
+
+    if (res.status === 202) {
+      await sleep(2000, signal);
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Status check failed (${res.status})`);
+    }
+
+    // Success: return binary
+    const blob = await res.blob();
+    return blob;
+  }
+
+  throw new Error("Processing timed out");
+}
+
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => resolve(), ms);
+    if (signal) {
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          reject(new DOMException("Aborted", "AbortError"));
+        },
+        { once: true }
+      );
+    }
+  });
 }
 
 async function savePreparedInlineMessage(file, userId) {
